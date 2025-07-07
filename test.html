@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>PM Avatar in Office</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      background-color: #0d1117;
+    }
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+    #chat-box {
+      position: absolute;
+      top: 20%;
+      left: 72%;
+      transform: translate(-50%, -50%);
+      background: #ffffff;
+      color: #0d1117;
+      padding: 14px 20px;
+      border-radius: 15px;
+      font-family: 'Comic Sans MS', 'Arial', sans-serif;
+      font-size: 15px;
+      font-weight: bold;
+      box-shadow: 4px 4px 10px rgba(0, 0, 0, 0.3);
+      border: 3px solid #0d1117;
+      max-width: 800px;
+      text-align: center;
+      z-index: 10;
+    }
+    #chat-box .tail {
+      position: absolute;
+      bottom: -20px;
+      left: 30%;
+      transform: translateX(-50%);
+      width: 0;
+      height: 0;
+      border-left: 12px solid transparent;
+      border-right: 12px solid transparent;
+      border-top: 20px solid #fffcfc;
+      z-index: -1;
+    }
+    #chat-input {
+      position: absolute;
+      top: 75%;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      z-index: 10;
+      width: 400px;
+    }
+    #message-input {
+      background-color: #ffffff;
+      color: #0d1117;
+      border: 2px solid #0d1117;
+      border-radius: 10px;
+      padding: 12px 16px;
+      font-family: 'Arial', sans-serif;
+      font-size: 16px;
+      font-weight: 600;
+      outline: none;
+    }
+    #send-button {
+      background-color: #007acc;
+      color: #ffffff;
+      border: 2px solid #007acc;
+      border-radius: 10px;
+      padding: 12px 16px;
+      font-family: 'Arial', sans-serif;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background-color 0.3s;
+    }
+    #send-button:hover {
+      background-color: #005a9e;
+    }
+    #send-button:disabled {
+      background-color: #cccccc;
+      cursor: not-allowed;
+    }
+    .loading {
+      display: inline-block;
+      width: 20px;
+      height: 20px;
+      border: 3px solid #f3f3f3;
+      border-top: 3px solid #007acc;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+    .typing-indicator {
+      display: none;
+      color: #666;
+      font-style: italic;
+    }
+  </style>
+</head>
+<body>
+
+<canvas id="avatar-canvas"></canvas>
+<div id="chat-box" style="display:none">
+  <div id="chat-message"></div>
+  <div class="tail"></div>
+  <div class="typing-indicator" id="typing-indicator">Vighnesh is typing...</div>
+</div>
+<div id="chat-input">
+  <input type="text" id="message-input" placeholder="Ask me anything about my experience..." />
+  <button id="send-button">Send Message</button>
+</div>
+
+<script src="https://unpkg.com/three@0.141.0/build/three.min.js"></script>
+<script src="https://unpkg.com/three@0.141.0/examples/js/loaders/GLTFLoader.js"></script>
+
+<script>
+  let mixer;
+  let avatar;
+  let pauseThinking = false;
+  const particles = [];
+  const clock = new THREE.Clock();
+  let currentThreadId = null;
+
+  const scene = new THREE.Scene();
+  const textureLoader = new THREE.TextureLoader();
+  textureLoader.load('https://i.postimg.cc/xT7LrkF0/backOG.png', texture => {
+    scene.background = texture;
+  });
+
+  const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+  camera.position.set(0, 1.6, 1.6);
+  camera.lookAt(0, 1.4, 0);
+
+  const renderer = new THREE.WebGLRenderer({ canvas: document.getElementById("avatar-canvas"), antialias: true, alpha: true });
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.shadowMap.enabled = true;
+
+  const keyLight = new THREE.DirectionalLight(0xfff3c4, 2.2);
+  keyLight.position.set(2, 2.5, 2);
+  scene.add(keyLight);
+
+  const rimLight = new THREE.DirectionalLight(0x88ccff, 1.2);
+  rimLight.position.set(-2, 1.5, -2);
+  scene.add(rimLight);
+
+  const fillLight = new THREE.HemisphereLight(0xfff6e6, 0x222233, 0.4);
+  fillLight.position.set(0, 1, 0);
+  scene.add(fillLight);
+
+  const monitorGlow = new THREE.PointLight(0xffffff, 0.6, 2);
+  monitorGlow.position.set(-1.2, 1.4, 1);
+  scene.add(monitorGlow);
+
+  function animate() {
+    requestAnimationFrame(animate);
+    const delta = clock.getDelta();
+    const t = clock.getElapsedTime();
+
+    if (avatar && !pauseThinking) {
+      avatar.position.y = -1.9 + Math.sin(t * 2) * 0.0075;
+    }
+
+    particles.forEach(p => {
+      p.position.add(p.velocity.clone().multiplyScalar(0.1));
+      p.velocity.y -= 0.01;
+    });
+
+    if (mixer) mixer.update(delta);
+    renderer.render(scene, camera);
+  }
+
+  // Chat functionality
+  const chatBox = document.getElementById("chat-box");
+  const chatMessage = document.getElementById("chat-message");
+  const messageInput = document.getElementById("message-input");
+  const sendButton = document.getElementById("send-button");
+  const typingIndicator = document.getElementById("typing-indicator");
+
+  function showChatBox() {
+    chatBox.style.display = "block";
+  }
+
+  function hideChatBox() {
+    chatBox.style.display = "none";
+  }
+
+  function showTypingIndicator() {
+    typingIndicator.style.display = "block";
+    chatMessage.style.display = "none";
+  }
+
+  function hideTypingIndicator() {
+    typingIndicator.style.display = "none";
+    chatMessage.style.display = "block";
+  }
+
+  function setMessage(message) {
+    chatMessage.innerHTML = message;
+  }
+
+  async function sendMessage() {
+    const message = messageInput.value.trim();
+    if (!message) return;
+
+    // Show user message
+    showChatBox();
+    setMessage(`<strong>You:</strong> ${message}`);
+    messageInput.value = "";
+
+    // Show typing indicator
+    setTimeout(() => {
+      showTypingIndicator();
+    }, 1000);
+
+    try {
+      sendButton.disabled = true;
+      sendButton.innerHTML = '<span class="loading"></span> Sending...';
+
+      const requestBody = { message };
+      if (currentThreadId) {
+        requestBody.threadId = currentThreadId;
+      }
+
+      const response = await fetch('http://localhost:3001/api/chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(requestBody)
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        if (data.threadId) {
+          currentThreadId = data.threadId;
+        }
+        hideTypingIndicator();
+        setMessage(`<strong>Vighnesh:</strong> ${data.reply}`);
+      } else {
+        hideTypingIndicator();
+        setMessage(`<strong>Error:</strong> ${data.error || 'Something went wrong'}`);
+      }
+    } catch (error) {
+      hideTypingIndicator();
+      setMessage(`<strong>Error:</strong> Failed to connect to server`);
+      console.error('Error:', error);
+    } finally {
+      sendButton.disabled = false;
+      sendButton.textContent = 'Send Message';
+    }
+  }
+
+  // Event listeners
+  sendButton.addEventListener('click', sendMessage);
+  messageInput.addEventListener('keypress', (e) => {
+    if (e.key === 'Enter') {
+      sendMessage();
+    }
+  });
+
+  // Welcome message
+  setTimeout(() => {
+    showChatBox();
+    setMessage("Hey there! 😊 I'm Vighnesh Chavan, a Product Manager. Ask me anything about my experience, background, or just say hello!");
+  }, 2000);
+
+  window.addEventListener("resize", () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
+
+  function animateBlink(mesh, index) {
+    let t = 0;
+    const speed = 0.15;
+    const interval = setInterval(() => {
+      t += speed;
+      if (t <= 1) {
+        mesh.morphTargetInfluences[index] = Math.sin(Math.PI * t);
+      } else {
+        mesh.morphTargetInfluences[index] = 0;
+        clearInterval(interval);
+      }
+    }, 30);
+  }
+
+  const loader = new THREE.GLTFLoader();
+  loader.load('https://models.readyplayer.me/67f0acb4a0e877cdcfa045c5.glb', function (gltf) {
+    avatar = gltf.scene;
+    avatar.scale.set(2, 2, 2);
+    avatar.position.set(0, -1.9, 0.0);
+    scene.add(avatar);
+
+    avatar.traverse(child => {
+      if (child.isMesh && child.name.toLowerCase().includes("head")) {
+        avatar.head = child;
+      }
+      console.log('Mesh found:', child.name);
+      // Add blinking if morph targets exist
+      if (child.isSkinnedMesh && child.morphTargetDictionary) {
+        const blinkIndex = child.morphTargetDictionary['Blink'] || child.morphTargetDictionary['eyesClosed'];
+        if (blinkIndex !== undefined) {
+          setInterval(() => {
+            animateBlink(child, blinkIndex);
+          }, Math.random() * 3000 + 3000); // blink every 3–6 seconds
+        }
+      }
+    });
+
+    mixer = new THREE.AnimationMixer(avatar);
+    if (gltf.animations.length > 0) {
+      const idleAction = mixer.clipAction(gltf.animations[0]);
+      idleAction.play();
+    }
+
+    function createSkillCubes(origin) {
+      const skills = ['Roadmaps', 'Data', 'UX', 'SQL', 'Figma', 'Leadership'];
+      for (let i = 0; i < skills.length; i++) {
+        const geometry = new THREE.BoxGeometry(0.08, 0.08, 0.08);
+        const material = new THREE.MeshStandardMaterial({ color: new THREE.Color(Math.random(), Math.random(), Math.random()) });
+        const cube = new THREE.Mesh(geometry, material);
+
+        cube.position.copy(origin);
+        cube.velocity = new THREE.Vector3(
+          (Math.random() - 0.5) * 0.8,
+          Math.random() * 0.8 + 0.5,
+          (Math.random() - 0.5) * 0.8
+        );
+        scene.add(cube);
+        particles.push(cube);
+      }
+    }
+
+    animate();
+
+    // Enable cube explosion when head is clicked
+    renderer.domElement.addEventListener('click', event => {
+      const mouse = new THREE.Vector2(
+        (event.clientX / renderer.domElement.clientWidth) * 2 - 1,
+        -(event.clientY / renderer.domElement.clientHeight) * 2 + 1
+      );
+
+      const raycaster = new THREE.Raycaster();
+      raycaster.setFromCamera(mouse, camera);
+
+      const intersects = raycaster.intersectObject(avatar, true);
+      if (intersects.length > 0) {
+        createSkillCubes(intersects[0].point);
+      }
+    });
+  });
+</script>
+
+</body>
+</html>
