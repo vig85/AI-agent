@@ -50,6 +50,15 @@ async function checkAssistant() {
 
 checkAssistant();
 
+// Health check endpoint
+app.get('/', (req, res) => {
+  res.json({ 
+    status: 'Server is running!', 
+    message: 'Use POST /api/chat to interact with the AI assistant',
+    timestamp: new Date().toISOString()
+  });
+});
+
 // Chat endpoint
 app.post('/api/chat', async (req, res) => {
   const { message } = req.body;
